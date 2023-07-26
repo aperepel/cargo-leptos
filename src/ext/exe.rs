@@ -246,92 +246,18 @@ impl Exe {
         let (target_os, target_arch) = os_arch().unwrap();
 
         let exe = match self {
-            Exe::CargoGenerate => {
-                // There's a problem with upgrading cargo-generate because the tar file cannot be extracted
-                // due to missing support for https://github.com/alexcrichton/tar-rs/pull/298
-                // The tar extracts ok, but contains a folder `GNUSparseFile.0` which contains a file `cargo-generate`
-                // that has not been fully extracted.
-                // let command = &CommandCargoGenerate as &dyn Command;
-                let version = CommandCargoGenerate.resolve_version().await;
-
-                let target = match (target_os, target_arch) {
-                    ("macos", "aarch64") => "aarch64-apple-darwin",
-                    ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
-                    ("macos", "x86_64") => "x86_64-apple-darwin",
-                    ("windows", "x86_64") => "x86_64-pc-windows-msvc",
-                    ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
-                    _ => bail!("No cargo-generate tar binary found for {target_os} {target_arch}"),
-                };
-
-                let exe = match target_os {
-                    "windows" => "cargo-generate.exe".to_string(),
-                    _ => "cargo-generate".to_string(),
-                };
-                let url = format!("https://github.com/cargo-generate/cargo-generate/releases/download/v{version}/cargo-generate-v{version}-{target}.tar.gz");
-                ExeMeta {
-                    name: "cargo-generate",
-                    version,
-                    url,
-                    exe,
-                    manual: "Try manually installing cargo-generate: https://github.com/cargo-generate/cargo-generate#installation".to_string()
-                }
-            }
-            Exe::Sass => {
-                let version = CommandSass.resolve_version().await;
-
-                let is_musl_env = is_linux_musl_env();
-                let url = if is_musl_env {
-                    match target_arch {
-                        "x86_64" => format!("https://github.com/dart-musl/dart-sass/releases/download/{version}/dart-sass-{version}-linux-x64.tar.gz"),
-                        "aarch64" => format!("https://github.com/dart-musl/dart-sass/releases/download/{version}/dart-sass-{version}-linux-arm64.tar.gz"),
-                        _ => bail!("No sass tar binary found for linux-musl {target_arch}")
-                    }
-                } else {
-                    match (target_os, target_arch) {
-                        ("windows", "x86_64") => format!("https://github.com/sass/dart-sass/releases/download/{version}/dart-sass-{version}-windows-x64.zip"),
-                        ("macos" | "linux", "x86_64") => format!("https://github.com/sass/dart-sass/releases/download/{version}/dart-sass-{version}-{target_os}-x64.tar.gz"),
-                        ("macos" | "linux", "aarch64") => format!("https://github.com/sass/dart-sass/releases/download/{version}/dart-sass-{version}-{target_os}-arm64.tar.gz"),
-                        _ => bail!("No sass tar binary found for {target_os} {target_arch}")
-                    }
-                };
-                let exe = match target_os {
-                    "windows" => "dart-sass/sass.bat".to_string(),
-                    _ => "dart-sass/sass".to_string(),
-                };
-                ExeMeta {
-                    name: "sass",
-                    version,
-                    url,
-                    exe,
-                    manual: "Try manually installing sass: https://sass-lang.com/install".to_string(),
-                }
-            }
+            // There's a problem with upgrading cargo-generate because the tar file cannot be extracted
+            // due to missing support for https://github.com/alexcrichton/tar-rs/pull/298
+            // The tar extracts ok, but contains a folder `GNUSparseFile.0` which contains a file `cargo-generate`
+            // that has not been fully extracted.
+            // let command = &CommandCargoGenerate as &dyn Command;
+            Exe::CargoGenerate => CommandCargoGenerate.exe_meta(target_os, target_arch).await.dot()?,
+            Exe::Sass => CommandSass.exe_meta(target_os, target_arch).await.dot()?,
             Exe::WasmOpt => CommandWasmOpt.exe_meta(target_os, target_arch).await.dot()?,
             Exe::Tailwind => CommandTailwind.exe_meta(target_os, target_arch).await.dot()?,
         };
 
         Ok(exe)
-    }
-
-    async fn check_latest_version() -> Option<String> {
-        todo!()
-    }
-
-    /// Tailwind uses the 'vMaj.Min.Pat' format.
-    /// WASM opt uses 'version_NNN' format.
-    /// We generally want to keep the suffix intact,
-    /// as it carries classifiers, etc, but strip non-ascii
-    /// digits from the prefix.
-    #[inline]
-    fn sanitize_version_prefix(ver_string: &str) -> String {
-        todo!()
-    }
-
-    /// Attempts to convert a non-semver version string to a semver one.
-    /// E.g. WASM Opt uses `version_112`, which is not semver even if
-    /// we strip the prefix, treat it as `112.0.0`
-    fn normalize_version(ver_string: &str) -> Option<Version> {
-        todo!()
     }
 }
 
@@ -347,12 +273,8 @@ struct CommandCargoGenerate;
 #[async_trait]
 impl Command for CommandTailwind {
     fn name(&self) -> &'static str { "tailwindcss" }
-    fn default_version(&self) -> &'static str {
-        "v3.3.3"
-    }
-    fn env_var_version_name(&self) -> &'static str {
-        ENV_VAR_LEPTOS_TAILWIND_VERSION
-    }
+    fn default_version(&self) -> &'static str { "v3.3.3" }
+    fn env_var_version_name(&self) -> &'static str { ENV_VAR_LEPTOS_TAILWIND_VERSION }
     fn github_owner(&self) -> &'static str { "tailwindlabs" }
     fn github_repo(&self) -> &'static str { "tailwindcss" }
 
@@ -382,17 +304,17 @@ impl Command for CommandTailwind {
             (_, _) => format!("{}-linux-arm64", self.name()),
         })
     }
+
+    fn manual_install_instructions(&self) -> String {
+        "Try manually installing tailwindcss: https://tailwindcss.com/docs/installation".to_string()
+    }
 }
 
 #[async_trait]
 impl Command for CommandWasmOpt {
     fn name(&self) -> &'static str { "wasm-opt" }
-    fn default_version(&self) -> &'static str {
-        "version_112"
-    }
-    fn env_var_version_name(&self) -> &'static str {
-        ENV_VAR_LEPTOS_WASM_OPT_VERSION
-    }
+    fn default_version(&self) -> &'static str { "version_112" }
+    fn env_var_version_name(&self) -> &'static str { ENV_VAR_LEPTOS_WASM_OPT_VERSION }
     fn github_owner(&self) -> &'static str { "WebAssembly" }
     fn github_repo(&self) -> &'static str { "binaryen" }
 
@@ -425,51 +347,110 @@ impl Command for CommandWasmOpt {
             _ => format!("binaryen-{}/bin/{}", version.unwrap_or_default(), self.name()),
         })
     }
+
+    fn manual_install_instructions(&self) -> String {
+        "Try manually installing binaryen: https://github.com/WebAssembly/binaryen".to_string()
+    }
 }
 
 #[async_trait]
 impl Command for CommandSass {
-    fn name(&self) -> &'static str { "Tailwind" }
-    fn default_version(&self) -> &'static str {
-        "1.58.3"
-    }
-    fn env_var_version_name(&self) -> &'static str {
-        ENV_VAR_LEPTOS_TAILWIND_VERSION
-    }
+    fn name(&self) -> &'static str { "sass" }
+    fn default_version(&self) -> &'static str { "1.58.3" }
+    fn env_var_version_name(&self) -> &'static str { ENV_VAR_LEPTOS_SASS_VERSION }
     fn github_owner(&self) -> &'static str { "dart-musl" }
     fn github_repo(&self) -> &'static str { "dart-sass" }
 
     fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String> {
-        todo!()
+        let is_musl_env = is_linux_musl_env();
+        Ok(if is_musl_env {
+            match target_arch {
+                "x86_64" => format!(
+                    "https://github.com/{}/{}/releases/download/{}/dart-sass-{}-linux-x64.tar.gz",
+                    self.github_owner(), self.github_repo(), version, version
+                ),
+                "aarch64" => format!(
+                    "https://github.com/{}/{}/releases/download/{}/dart-sass-{}-linux-arm64.tar.gz"
+                    , self.github_owner(), self.github_repo(), version, version
+                ),
+                _ => bail!("No sass tar binary found for linux-musl {target_arch}")
+            }
+        } else {
+            match (target_os, target_arch) {
+                // note the different github_owner
+                ("windows", "x86_64") => format!(
+                    "https://github.com/sass/{}/releases/download/{}/dart-sass-{}-windows-x64.zip",
+                    self.github_repo(), version, version
+                ),
+                ("macos" | "linux", "x86_64") => format!(
+                    "https://github.com/sass/{}/releases/download/{}/dart-sass-{}-{}-x64.tar.gz",
+                    self.github_repo(), version, version, target_os
+                ),
+                ("macos" | "linux", "aarch64") => format!(
+                    "https://github.com/sass/{}/releases/download/{}/dart-sass-{}-{}-arm64.tar.gz",
+                    self.github_repo(), version, version, target_os
+                ),
+                _ => bail!("No sass tar binary found for {target_os} {target_arch}")
+            }
+        })
     }
 
-    fn executable_name(&self, target_os: &str, target_arch: &str, version: Option<&str>) -> Result<String> {
-        todo!()
+    fn executable_name(&self, target_os: &str, _target_arch: &str, _version: Option<&str>) -> Result<String> {
+        Ok(match target_os {
+            "windows" => "dart-sass/sass.bat".to_string(),
+            _ => "dart-sass/sass".to_string(),
+        })
+    }
+
+    fn manual_install_instructions(&self) -> String {
+        "Try manually installing sass: https://sass-lang.com/install".to_string()
     }
 }
 
 #[async_trait]
 impl Command for CommandCargoGenerate {
-    fn name(&self) -> &'static str { "Tailwind" }
-    fn default_version(&self) -> &'static str {
-        "0.17.3"
-    }
-    fn env_var_version_name(&self) -> &'static str {
-        ENV_VAR_LEPTOS_TAILWIND_VERSION
-    }
+    fn name(&self) -> &'static str {"cargo-generate"}
+    fn default_version(&self) -> &'static str { "v0.17.3" }
+    fn env_var_version_name(&self) -> &'static str { ENV_VAR_LEPTOS_CARGO_GENERATE_VERSION }
     fn github_owner(&self) -> &'static str { "cargo-generate" }
     fn github_repo(&self) -> &'static str { "cargo-generate" }
 
     fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String> {
-        todo!()
+        let target = match (target_os, target_arch) {
+            ("macos", "aarch64") => "aarch64-apple-darwin",
+            ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
+            ("macos", "x86_64") => "x86_64-apple-darwin",
+            ("windows", "x86_64") => "x86_64-pc-windows-msvc",
+            ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+            _ => bail!("No cargo-generate tar binary found for {target_os} {target_arch}"),
+        };
+
+        Ok(format!(
+            "https://github.com/{}/{}/releases/download/v{}/cargo-generate-v{}-{}.tar.gz",
+            self.github_owner(),
+            self.github_repo(),
+            version, version,
+            target
+        ))
     }
 
-    fn executable_name(&self, target_os: &str, target_arch: &str, version: Option<&str>) -> Result<String> {
-        todo!()
+    fn executable_name(&self, target_os: &str, _target_arch: &str, _version: Option<&str>) -> Result<String> {
+        Ok(match target_os {
+            "windows" => "cargo-generate.exe".to_string(),
+            _ => "cargo-generate".to_string(),
+        })
+    }
+
+    fn manual_install_instructions(&self) -> String {
+        "Try manually installing cargo-generate: https://github.com/cargo-generate/cargo-generate#installation".to_string()
     }
 }
 
 #[async_trait]
+/// Template trait, implementors should only fill in
+/// the command-specific logic. Handles caching, latest
+/// version checking against the GitHub API and env var
+/// version override for a given command.
 trait Command {
     fn name(&self) -> &'static str;
     fn default_version(&self) -> &str;
@@ -478,6 +459,11 @@ trait Command {
     fn github_repo(&self) -> &str;
     fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String>;
     fn executable_name(&self, target_os: &str, target_arch: &str, version: Option<&str>) -> Result<String>;
+    #[allow(unused)]
+    fn manual_install_instructions(&self) -> String {
+        // default placeholder text, individual commands can override and customize
+        "Try manually installing the command".to_string()
+    }
 
     /// Resolves and creates command metadata.
     /// Checks if a newer version of the binary is available (once a day).
@@ -502,8 +488,7 @@ trait Command {
             version,
             url: url.to_owned(),
             exe: exe.to_string(),
-            manual: format!("Try manually installing [{}] from {}",
-                            self.name(), url.to_owned()),
+            manual: self.manual_install_instructions(),
         })
     }
 
@@ -667,6 +652,7 @@ trait Command {
 
     /// Tailwind uses the 'vMaj.Min.Pat' format.
     /// WASM opt uses 'version_NNN' format.
+    /// Cargo-generate has the 'vX.Y.Z' format
     /// We generally want to keep the suffix intact,
     /// as it carries classifiers, etc, but strip non-ascii
     /// digits from the prefix.
@@ -684,27 +670,29 @@ mod tests {
 
     #[test]
     fn test_sanitize_version_prefix() {
-        let version = Exe::sanitize_version_prefix("v1.2.3");
+        let command = CommandTailwind; // any will do
+        let version = command.sanitize_version_prefix("v1.2.3");
         assert_eq!(version, "1.2.3");
         assert!(Version::parse(&version).is_ok());
-        let version = Exe::sanitize_version_prefix("version_1.2.3");
+        let version = command.sanitize_version_prefix("version_1.2.3");
         assert_eq!(version, "1.2.3");
         assert!(Version::parse(&version).is_ok());
     }
 
     #[test]
     fn test_normalize_version() {
-        let version = Exe::normalize_version("version_112");
+        let command = CommandTailwind; // any will do
+        let version = command.normalize_version("version_112");
         assert!(version.is_some_and(|v| {
             v.major == 112 && v.minor == 0 && v.patch == 0
         }));
 
-        let version = Exe::normalize_version("v3.3.3");
+        let version = command.normalize_version("v3.3.3");
         assert!(version.is_some_and(|v| {
             v.major == 3 && v.minor == 3 && v.patch == 3
         }));
 
-        let version = Exe::normalize_version("10.0.0");
+        let version = command.normalize_version("10.0.0");
         assert!(version.is_some_and(|v| {
             v.major == 10 && v.minor == 0 && v.patch == 0
         }));
@@ -712,12 +700,13 @@ mod tests {
 
     #[test]
     fn test_incomplete_version_strings() {
-        let version = Exe::normalize_version("5");
+        let command = CommandTailwind; // any will do
+        let version = command.normalize_version("5");
         assert!(version.is_some_and(|v| {
             v.major == 5 && v.minor == 0 && v.patch == 0
         }));
 
-        let version = Exe::normalize_version("0.2");
+        let version = command.normalize_version("0.2");
         assert!(version.is_some_and(|v| {
             v.major == 0 && v.minor == 2 && v.patch == 0
         }));
@@ -725,7 +714,8 @@ mod tests {
 
     #[test]
     fn test_invalid_versions() {
-        let version = Exe::normalize_version("1a-test");
+        let command = CommandTailwind; // any will do
+        let version = command.normalize_version("1a-test");
         assert_eq!(version, None);
     }
 }
