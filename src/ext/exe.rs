@@ -7,7 +7,6 @@ use std::{
     fs::{self, File},
     io::{Cursor, Write},
     path::{Path, PathBuf},
-    collections::HashMap,
     sync::Once
 };
 
@@ -19,6 +18,7 @@ use super::util::{is_linux_musl_env, os_arch};
 
 #[cfg(target_family = "unix")]
 use std::os::unix::prelude::PermissionsExt;
+use std::time::{Duration, SystemTime};
 use reqwest::ClientBuilder;
 
 use semver::{Version};
@@ -33,22 +33,8 @@ pub struct ExeMeta {
 }
 
 lazy_static::lazy_static!{
-    static ref ON_STARTUP_ONCE: HashMap<Exe, Once> = {
-        let mut onces = HashMap::new();
-        onces.insert(Exe::CargoGenerate, Once::new());
-        onces.insert(Exe::Sass, Once::new());
-        onces.insert(Exe::WasmOpt, Once::new());
-        onces.insert(Exe::Tailwind, Once::new());
-        onces
-    };
-
     static ref ON_STARTUP_DEBUG_ONCE: Once = Once::new();
 }
-
-const DEFAULT_CARGO_GENERATE_VERSION: &str = "0.17.3";
-const DEFAULT_SASS_VERSION: &str = "1.58.3";
-const DEFAULT_WASM_OPT_VERSION: &str = "version_112";
-const DEFAULT_TAILWIND_VERSION: &str = "v3.3.3";
 
 pub const ENV_VAR_LEPTOS_CARGO_GENERATE_VERSION: &str = "LEPTOS_CARGO_GENERATE_VERSION";
 pub const ENV_VAR_LEPTOS_TAILWIND_VERSION: &str = "LEPTOS_TAILWIND_VERSION";
@@ -265,7 +251,9 @@ impl Exe {
                 // due to missing support for https://github.com/alexcrichton/tar-rs/pull/298
                 // The tar extracts ok, but contains a folder `GNUSparseFile.0` which contains a file `cargo-generate`
                 // that has not been fully extracted.
-                let version = self.resolve_version().await;
+                // let command = &CommandCargoGenerate as &dyn Command;
+                let version = CommandCargoGenerate.resolve_version().await;
+                // let version = command.resolve_version().await.as_str();
 
                 let target = match (target_os, target_arch) {
                     ("macos", "aarch64") => "aarch64-apple-darwin",
@@ -290,7 +278,7 @@ impl Exe {
                 }
             }
             Exe::Sass => {
-                let version = self.resolve_version().await;
+                let version = CommandSass.resolve_version().await;
 
                 let is_musl_env = is_linux_musl_env();
                 let url = if is_musl_env {
@@ -320,7 +308,7 @@ impl Exe {
                 }
             }
             Exe::WasmOpt => {
-                let version = self.resolve_version().await;
+                let version = CommandWasmOpt.resolve_version().await;
 
                 let target = match (target_os, target_arch) {
                     ("linux", _) => "x86_64-linux",
@@ -347,7 +335,7 @@ impl Exe {
                 }
             }
             Exe::Tailwind => {
-                let version = self.resolve_version().await;
+                let version = CommandTailwind.resolve_version().await;
 
                 let url = match (target_os, target_arch) {
                     ("windows", "x86_64") => format!("https://github.com/tailwindlabs/tailwindcss/releases/download/{version}/tailwindcss-windows-x64.exe"),
@@ -379,139 +367,29 @@ impl Exe {
 
     /// Resolve the version of the command.
     /// Always guaranteed to fall back to the default version in case of any errors.
-    async fn resolve_version(&self) -> String {
-        match &self {
-            Exe::CargoGenerate => {
-                let latch = ON_STARTUP_ONCE.get(self);
-                let version = env::var(ENV_VAR_LEPTOS_CARGO_GENERATE_VERSION)
-                    .unwrap_or_else(|_| DEFAULT_CARGO_GENERATE_VERSION.into());
-
-                if let Some(latch) = latch {
-                    latch.call_once(|| {
-                        log::debug!("Command version for Cargo Generate resolved to {}", version);
-                    })
-                };
-
-                version
-            },
-            Exe::Sass => {
-                let latch = ON_STARTUP_ONCE.get(self);
-                let version = env::var(ENV_VAR_LEPTOS_SASS_VERSION)
-                    .unwrap_or_else(|_| DEFAULT_SASS_VERSION.into());
-
-                if let Some(latch) = latch {
-                    latch.call_once(|| {
-                        log::debug!("Command version for Sass resolved to {}", version);
-                    })
-                }
-
-                version
-            },
-            Exe::WasmOpt => {
-                let latch = ON_STARTUP_ONCE.get(self);
-                let version = env::var(ENV_VAR_LEPTOS_WASM_OPT_VERSION)
-                    .unwrap_or_else(|_| DEFAULT_WASM_OPT_VERSION.into());
-
-                if let Some(latch) = latch {
-                    latch.call_once(|| {
-                        log::debug!("Command version for WASM Optimizer resolved to {}", version);
-                    })
-                }
-
-                version
-            },
-            Exe::Tailwind => {
-                let latch = ON_STARTUP_ONCE.get(self);
-                let version = env::var(ENV_VAR_LEPTOS_TAILWIND_VERSION)
-                    .unwrap_or_else(|_| DEFAULT_TAILWIND_VERSION.into());
-
-                // get the latest version from github api
-                // cache the last check timestamp
-                // compare with the currently requested version
-                // inform a user if a more recent compatible version is available
-
-                let mut first_run = false;
-                let (tx, rx) = tokio::sync::oneshot::channel();
-
-                if let Some(latch) = latch {
-                    latch.call_once(|| {
-                        first_run = true;
-                        tokio::spawn(async {
-                            log::debug!("Command checking for the latest Tailwind version");
-                            let latest = Self::check_latest_version().await;
-                            tx.send(latest).unwrap();
-                        });
-                    });
-                }
-
-                // only wait for a receive signal on the first run (i.e. not during the watch/reload)
-                if first_run {
-                    match rx.await {
-                        Ok(Some(latest)) => {
-                            let norm_latest = Self::normalize_version(latest.as_str());
-                            let norm_version = Self::normalize_version(version.clone().as_str());
-                            if norm_latest.is_some() && norm_version.is_some() {
-                                // TODO use the VersionReq for semantic matching
-                                match norm_version.cmp(&norm_latest) {
-                                    core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
-                                        log::debug!(
-                                            "Command requested version {} is already same or newer than available version {}",
-                                            version, &latest)
-                                    },
-                                    core::cmp::Ordering::Less => {
-                                        log::info!(
-                                            "Command requested version {}, but a newer version {} is available, consider upgrading",
-                                            version, &latest)
-                                    }
-                                }
-                            }
-                        }
-                        Ok(None) => { /* do nothing, the error will have been logged already */ },
-                        Err(e) => {
-                            log::debug!("Command failed to check for the latest version: {}",  e);
-                        }
-                    }
-                }
-
-                version
-            }
-        }
-    }
+    // async fn resolve_version(self) -> String {
+    //     match &self {
+    //         Exe::CargoGenerate => {
+    //             CommandCargoGenerate.resolve_version().await.to_string()
+    //         },
+    //         Exe::Sass => {
+    //             CommandSass.resolve_version().await.to_string()            },
+    //         Exe::WasmOpt => {
+    //             CommandWasmOpt.resolve_version().await.to_string()
+    //         },
+    //         Exe::Tailwind => {
+    //             // get the latest version from github api
+    //             // cache the last check timestamp
+    //             // compare with the currently requested version
+    //             // inform a user if a more recent compatible version is available
+    //
+    //             CommandTailwind.resolve_version().await.to_string()
+    //         }
+    //     }
+    // }
 
     async fn check_latest_version() -> Option<String> {
-        let client = ClientBuilder::default()
-            // this github api allows anonymous, but requires a user-agent header be set
-            .user_agent("cargo-leptos")
-            .build()
-            .unwrap_or_default();
-
-        if let Ok(response) = client.get (
-            "https://api.github.com/repos/tailwindlabs/tailwindcss/releases/latest")
-            .send().await {
-
-            if !response.status().is_success() {
-                log::error!("Command GitHub API request failed: {}", response.status());
-                return None
-            }
-
-            #[derive(serde::Deserialize)]
-            struct Github {
-                tag_name: String // this is the version number, not the git tag
-            }
-
-            let github: Github = match response.json().await {
-                Ok(json) => json,
-                Err(e) => {
-                    log::debug!("Command failed to parse the response JSON from the GitHub API: {}", e);
-                    return None
-                }
-            };
-
-            Some(github.tag_name)
-        } else {
-            log::debug!("Command failed to check for the latest version");
-            None
-        }
+        todo!()
     }
 
     /// Tailwind uses the 'vMaj.Min.Pat' format.
@@ -521,14 +399,223 @@ impl Exe {
     /// digits from the prefix.
     #[inline]
     fn sanitize_version_prefix(ver_string: &str) -> String {
-        ver_string.chars().skip_while(|c| !c.is_ascii_digit() || *c == '_').collect::<String>()
+        todo!()
     }
 
     /// Attempts to convert a non-semver version string to a semver one.
     /// E.g. WASM Opt uses `version_112`, which is not semver even if
     /// we strip the prefix, treat it as `112.0.0`
     fn normalize_version(ver_string: &str) -> Option<Version> {
-        let ver_string = Self::sanitize_version_prefix(ver_string);
+        todo!()
+    }
+}
+
+// fallback to this crate until rust stable includes async traits
+// https://github.com/dtolnay/async-trait
+use async_trait::async_trait;
+
+struct CommandTailwind;
+struct CommandWasmOpt;
+struct CommandSass;
+struct CommandCargoGenerate;
+
+#[async_trait]
+impl Command for CommandTailwind {
+    fn name(&self) -> &'static str { "Tailwind" }
+    fn default_version(&self) -> &'static str {
+        "v3.3.3"
+    }
+    fn env_var_version_name(&self) -> &'static str {
+        ENV_VAR_LEPTOS_TAILWIND_VERSION
+    }
+    fn github_owner(&self) -> &'static str { "tailwindlabs" }
+    fn github_repo(&self) -> &'static str { "tailwindcss" }
+}
+
+#[async_trait]
+impl Command for CommandWasmOpt {
+    fn name(&self) -> &'static str { "WASM Opt" }
+    fn default_version(&self) -> &'static str {
+        "version_112"
+    }
+    fn env_var_version_name(&self) -> &'static str {
+        ENV_VAR_LEPTOS_WASM_OPT_VERSION
+    }
+    fn github_owner(&self) -> &'static str { "WebAssembly" }
+    fn github_repo(&self) -> &'static str { "binaryen" }
+}
+
+#[async_trait]
+impl Command for CommandSass {
+    fn name(&self) -> &'static str { "Tailwind" }
+    fn default_version(&self) -> &'static str {
+        "1.58.3"
+    }
+    fn env_var_version_name(&self) -> &'static str {
+        ENV_VAR_LEPTOS_TAILWIND_VERSION
+    }
+    fn github_owner(&self) -> &'static str { "dart-musl" }
+    fn github_repo(&self) -> &'static str { "dart-sass" }
+}
+
+#[async_trait]
+impl Command for CommandCargoGenerate {
+    fn name(&self) -> &'static str { "Tailwind" }
+    fn default_version(&self) -> &'static str {
+        "0.17.3"
+    }
+    fn env_var_version_name(&self) -> &'static str {
+        ENV_VAR_LEPTOS_TAILWIND_VERSION
+    }
+    fn github_owner(&self) -> &'static str { "cargo-generate" }
+    fn github_repo(&self) -> &'static str { "cargo-generate" }
+}
+
+
+#[async_trait]
+trait Command {
+    fn name(&self) -> &'static str;
+    fn default_version(&self) -> &str;
+    fn env_var_version_name(&self) -> &str;
+    fn github_owner(&self) -> &str;
+    fn github_repo(&self) -> &str;
+
+    /// Returns true if the command should check for a new version
+    /// Returns false in case of any errors (no check)
+    async fn should_check_for_new_version(&self) -> bool {
+        match get_cache_dir() {
+            Ok(dir) => {
+                let marker = dir.join(format!(".{}_last_checked", self.name()));
+                return match (marker.exists(), marker.is_dir()) {
+                    (_, true) => { // conflicting dir instead of a marker file, bail
+                    log::warn!("Command [{}] encountered a conflicting dir in the cache, please delete {}",
+                        self.name(), marker.display());
+
+                        false
+                    },
+                    (true, _) => { // existing marker file, read and check if last checked > 1 DAY
+                        let contents = tokio::fs::read_to_string(marker).await;
+                        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+                        if let Some(timestamp) =
+                            contents.ok()
+                                .map(|s| s.parse::<u64>().ok().unwrap()) {
+                            let last_checked = Duration::from_millis(timestamp);
+                            let one_day = Duration::from_secs(24 * 60 * 60);
+                            return now.is_ok_and(|now| (now - last_checked) > one_day);
+                        } else { false }
+                    },
+                    (false, _) => { // no marker file yet, record and hint to check
+                        let unix_timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+                        return if let Ok(unix_timestamp) = unix_timestamp {
+                            tokio::fs::write(marker, unix_timestamp.as_millis().to_string()).await.is_ok()
+                        } else {
+                            false
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                log::warn!("Command {} failed to get cache dir: {}", self.name(), e);
+                false
+            }
+        }
+    }
+
+
+    async fn check_for_latest_version(&self) -> Option<String> {
+        let client = ClientBuilder::default()
+            // this github api allows anonymous, but requires a user-agent header be set
+            .user_agent("cargo-leptos")
+            .build()
+            .unwrap_or_default();
+
+        if let Ok(response) = client.get(
+            format!("https://api.github.com/repos/{}/{}/releases/latest", self.github_owner(), self.github_repo()))
+            .send().await {
+
+            if !response.status().is_success() {
+                log::error!("Command [{}] GitHub API request failed: {}", self.name(), response.status());
+                return None
+            }
+
+            #[derive(serde::Deserialize)]
+            struct Github {
+                tag_name: String, // this is the version number, not the git tag
+            }
+
+            let github: Github = match response.json().await {
+                Ok(json) => json,
+                Err(e) => {
+                    log::debug!("Command [{}] failed to parse the response JSON from the GitHub API: {}", self.name(), e);
+                    return None
+                }
+            };
+
+            Some(github.tag_name)
+        } else {
+            log::debug!("Command [{}] failed to check for the latest version", self.name());
+            None
+        }
+    }
+
+    /// get the latest version from github api
+    /// cache the last check timestamp
+    /// compare with the currently requested version
+    /// inform a user if a more recent compatible version is available
+    async fn resolve_version(&'static self) -> String { // 'static self is odd, but required for an async closure below
+        if !self.should_check_for_new_version().await {
+            log::trace!("Command [{}] NOT checking for the latest available version", &self.name());
+            return self.default_version().into();
+        }
+
+        log::debug!("Command [{}] checking for the latest available version", self.name());
+
+        let version =
+            env::var(self.env_var_version_name())
+            .unwrap_or_else(|_| self.default_version().into()).to_owned();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        tokio::spawn(async {
+            log::debug!("Command [{}] checking for the latest available version", self.name());
+            let latest = self.check_for_latest_version().await;
+            tx.send(latest).unwrap();
+        });
+
+        match rx.await {
+            Ok(Some(latest)) => {
+                let norm_latest = self.normalize_version(latest.as_str());
+                let norm_version = self.normalize_version(&version);
+                if norm_latest.is_some() && norm_version.is_some() {
+                    // TODO use the VersionReq for semantic matching
+                    match norm_version.cmp(&norm_latest) {
+                        core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
+                            log::debug!(
+                                            "Command [{}] requested version {} is already same or newer than available version {}",
+                                            self.name(), version, &latest)
+                        },
+                        core::cmp::Ordering::Less => {
+                            log::info!(
+                                            "Command [{}] requested version {}, but a newer version {} is available, consider upgrading",
+                                            self.name(), version, &latest)
+                        }
+                    }
+                }
+            }
+            Ok(None) => { /* do nothing, the error will have been logged already */ },
+            Err(e) => {
+                log::debug!("Command [{}] failed to check for the latest version: {}", self.name(), e);
+            }
+        }
+
+        version
+    }
+
+    /// Attempts to convert a non-semver version string to a semver one.
+    /// E.g. WASM Opt uses `version_112`, which is not semver even if
+    /// we strip the prefix, treat it as `112.0.0`
+    fn normalize_version(&self, ver_string: &str) -> Option<Version> {
+        let ver_string = self.sanitize_version_prefix(ver_string);
         match Version::parse(&ver_string) {
             Ok(v) => Some(v),
             Err(_) => {
@@ -547,6 +634,17 @@ impl Exe {
             }
         }
     }
+
+    /// Tailwind uses the 'vMaj.Min.Pat' format.
+    /// WASM opt uses 'version_NNN' format.
+    /// We generally want to keep the suffix intact,
+    /// as it carries classifiers, etc, but strip non-ascii
+    /// digits from the prefix.
+    #[inline]
+    fn sanitize_version_prefix(&self, ver_string: &str) -> String {
+        ver_string.chars().skip_while(|c| !c.is_ascii_digit() || *c == '_').collect::<String>()
+    }
+
 }
 
 #[cfg(test)]
