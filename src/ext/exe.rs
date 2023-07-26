@@ -7,7 +7,7 @@ use std::{
     fs::{self, File},
     io::{Cursor, Write},
     path::{Path, PathBuf},
-    sync::Once
+    sync::Once,
 };
 
 use std::env;
@@ -253,7 +253,6 @@ impl Exe {
                 // that has not been fully extracted.
                 // let command = &CommandCargoGenerate as &dyn Command;
                 let version = CommandCargoGenerate.resolve_version().await;
-                // let version = command.resolve_version().await.as_str();
 
                 let target = match (target_os, target_arch) {
                     ("macos", "aarch64") => "aarch64-apple-darwin",
@@ -335,16 +334,14 @@ impl Exe {
                 }
             }
             Exe::Tailwind => {
-                let version = CommandTailwind.resolve_version().await;
+                let command = CommandTailwind;
+                let version = command.resolve_version().await;
+                let url = command.download_url(target_os, target_arch, version.as_str());
+                // let url = command.download_url(target_os, target_arch, version.clone().as_str());
+                if url.is_none() {
+                    bail!("Unknown target OS and Arch")
+                }
 
-                let url = match (target_os, target_arch) {
-                    ("windows", "x86_64") => format!("https://github.com/tailwindlabs/tailwindcss/releases/download/{version}/tailwindcss-windows-x64.exe"),
-                    ("macos", "x86_64") => format!("https://github.com/tailwindlabs/tailwindcss/releases/download/{version}/tailwindcss-macos-x64"),
-                    ("macos", "aarch64") => format!("https://github.com/tailwindlabs/tailwindcss/releases/download/{version}/tailwindcss-macos-arm64"),
-                    ("linux", "x86_64") => format!("https://github.com/tailwindlabs/tailwindcss/releases/download/{version}/tailwindcss-linux-x64"),
-                    ("linux", "aarch64") => format!("https://github.com/tailwindlabs/tailwindcss/releases/download/{version}/tailwindcss-linux-arm64"),
-                    _ => bail!("No tailwind binary found for {target_os} {target_arch}")
-                };
                 let exe = match (target_os, target_arch) {
                     ("windows", _) => "tailwindcss-windows-x64.exe".to_string(),
                     ("macos", "x86_64") => "tailwindcss-macos-x64".to_string(),
@@ -354,8 +351,8 @@ impl Exe {
                 };
                 ExeMeta {
                     name: "tailwindcss",
-                    version,
-                    url,
+                    version: version.clone(),
+                    url: url.unwrap_or_default(),
                     exe,
                     manual: "Try manually installing tailwindcss",
                 }
@@ -364,29 +361,6 @@ impl Exe {
 
         Ok(exe)
     }
-
-    /// Resolve the version of the command.
-    /// Always guaranteed to fall back to the default version in case of any errors.
-    // async fn resolve_version(self) -> String {
-    //     match &self {
-    //         Exe::CargoGenerate => {
-    //             CommandCargoGenerate.resolve_version().await.to_string()
-    //         },
-    //         Exe::Sass => {
-    //             CommandSass.resolve_version().await.to_string()            },
-    //         Exe::WasmOpt => {
-    //             CommandWasmOpt.resolve_version().await.to_string()
-    //         },
-    //         Exe::Tailwind => {
-    //             // get the latest version from github api
-    //             // cache the last check timestamp
-    //             // compare with the currently requested version
-    //             // inform a user if a more recent compatible version is available
-    //
-    //             CommandTailwind.resolve_version().await.to_string()
-    //         }
-    //     }
-    // }
 
     async fn check_latest_version() -> Option<String> {
         todo!()
@@ -421,7 +395,7 @@ struct CommandCargoGenerate;
 
 #[async_trait]
 impl Command for CommandTailwind {
-    fn name(&self) -> &'static str { "Tailwind" }
+    fn name(&self) -> &'static str { "tailwindcss" }
     fn default_version(&self) -> &'static str {
         "v3.3.3"
     }
@@ -430,6 +404,31 @@ impl Command for CommandTailwind {
     }
     fn github_owner(&self) -> &'static str { "tailwindlabs" }
     fn github_repo(&self) -> &'static str { "tailwindcss" }
+
+    /// Tool binary download url for the
+    ///
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
+        match (target_os, target_arch) {
+            ("windows", "x86_64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-windows-x64.exe",
+                                            self.github_owner(), self.github_repo(), version)),
+            ("macos", "x86_64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-macos-x64",
+                                           self.github_owner(), self.github_repo(), version)),
+            ("macos", "aarch64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-macos-arm64",
+                                            self.github_owner(), self.github_repo(), version)),
+            ("linux", "x86_64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-linux-x64",
+                                           self.github_owner(), self.github_repo(), version)),
+            ("linux", "aarch64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-linux-arm64",
+                                            self.github_owner(), self.github_repo(), version)),
+            _ => {
+                log::warn!("Command [{}] failed to find a match for {}-{} ", self.name(), target_os, target_arch);
+                None
+            },
+        }
+    }
+
+    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
+        todo!()
+    }
 }
 
 #[async_trait]
@@ -443,6 +442,14 @@ impl Command for CommandWasmOpt {
     }
     fn github_owner(&self) -> &'static str { "WebAssembly" }
     fn github_repo(&self) -> &'static str { "binaryen" }
+
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
+        todo!()
+    }
+
+    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
+        todo!()
+    }
 }
 
 #[async_trait]
@@ -456,6 +463,14 @@ impl Command for CommandSass {
     }
     fn github_owner(&self) -> &'static str { "dart-musl" }
     fn github_repo(&self) -> &'static str { "dart-sass" }
+
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
+        todo!()
+    }
+
+    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
+        todo!()
+    }
 }
 
 #[async_trait]
@@ -469,6 +484,14 @@ impl Command for CommandCargoGenerate {
     }
     fn github_owner(&self) -> &'static str { "cargo-generate" }
     fn github_repo(&self) -> &'static str { "cargo-generate" }
+
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
+        todo!()
+    }
+
+    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
+        todo!()
+    }
 }
 
 
@@ -479,6 +502,8 @@ trait Command {
     fn env_var_version_name(&self) -> &str;
     fn github_owner(&self) -> &str;
     fn github_repo(&self) -> &str;
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String>;
+    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str;
 
     /// Returns true if the command should check for a new version
     /// Returns false in case of any errors (no check)
@@ -488,25 +513,30 @@ trait Command {
                 let marker = dir.join(format!(".{}_last_checked", self.name()));
                 return match (marker.exists(), marker.is_dir()) {
                     (_, true) => { // conflicting dir instead of a marker file, bail
-                    log::warn!("Command [{}] encountered a conflicting dir in the cache, please delete {}",
-                        self.name(), marker.display());
+                        log::warn!("Command [{}] encountered a conflicting dir in the cache, please delete {}",
+                            self.name(), marker.display());
 
-                        false
+                            false
                     },
                     (true, _) => { // existing marker file, read and check if last checked > 1 DAY
-                        let contents = tokio::fs::read_to_string(marker).await;
+                        let contents = tokio::fs::read_to_string(&marker).await;
                         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
                         if let Some(timestamp) =
                             contents.ok()
-                                .map(|s| s.parse::<u64>().ok().unwrap()) {
+                                .map(|s| s.parse::<u64>().ok().unwrap_or_default()) {
                             let last_checked = Duration::from_millis(timestamp);
                             let one_day = Duration::from_secs(24 * 60 * 60);
-                            return now.is_ok_and(|now| (now - last_checked) > one_day);
+                            if let Ok(now) = now {
+                                match (now - last_checked) > one_day {
+                                    true => tokio::fs::write(&marker, now.as_millis().to_string()).await.is_ok(),
+                                    false => false,
+                                }
+                            } else { false }
                         } else { false }
                     },
                     (false, _) => { // no marker file yet, record and hint to check
-                        let unix_timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
-                        return if let Ok(unix_timestamp) = unix_timestamp {
+                        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+                        return if let Ok(unix_timestamp) = now {
                             tokio::fs::write(marker, unix_timestamp.as_millis().to_string()).await.is_ok()
                         } else {
                             false
@@ -523,6 +553,8 @@ trait Command {
 
 
     async fn check_for_latest_version(&self) -> Option<String> {
+        log::debug!("Command [{}] checking for the latest available version", self.name());
+
         let client = ClientBuilder::default()
             // this github api allows anonymous, but requires a user-agent header be set
             .user_agent("cargo-leptos")
@@ -562,28 +594,30 @@ trait Command {
     /// cache the last check timestamp
     /// compare with the currently requested version
     /// inform a user if a more recent compatible version is available
-    async fn resolve_version(&'static self) -> String { // 'static self is odd, but required for an async closure below
+    async fn resolve_version(&self) -> String { // 'static self is odd, but required for an async closure below
         if !self.should_check_for_new_version().await {
             log::trace!("Command [{}] NOT checking for the latest available version", &self.name());
             return self.default_version().into();
         }
 
-        log::debug!("Command [{}] checking for the latest available version", self.name());
-
         let version =
             env::var(self.env_var_version_name())
-            .unwrap_or_else(|_| self.default_version().into()).to_owned();
+                .unwrap_or_else(|_| self.default_version().into()).to_owned();
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        // let (tx, rx) = tokio::sync::oneshot::channel();
 
-        tokio::spawn(async {
-            log::debug!("Command [{}] checking for the latest available version", self.name());
-            let latest = self.check_for_latest_version().await;
-            tx.send(latest).unwrap();
-        });
+        // let s = std::sync::Arc::new(Mutex::new(self));
+        // let inner = s.clone();
+        // let future = async move {
+        //     let latest = inner.lock().await;
+        let latest = self.check_for_latest_version().await;
+            // tx.send(latest).unwrap();
+        // };
+        // tokio::spawn(future);
 
-        match rx.await {
-            Ok(Some(latest)) => {
+        match latest {
+        // match rx.await {
+            Some(latest) => {
                 let norm_latest = self.normalize_version(latest.as_str());
                 let norm_version = self.normalize_version(&version);
                 if norm_latest.is_some() && norm_version.is_some() {
@@ -602,10 +636,7 @@ trait Command {
                     }
                 }
             }
-            Ok(None) => { /* do nothing, the error will have been logged already */ },
-            Err(e) => {
-                log::debug!("Command [{}] failed to check for the latest version: {}", self.name(), e);
-            }
+            None => log::warn!("Command [{}] failed to check for the latest version", self.name())
         }
 
         version
