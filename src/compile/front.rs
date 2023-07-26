@@ -100,7 +100,7 @@ async fn bindgen(proj: &Project) -> Result<Outcome<Product>> {
     let wasm_file = &proj.lib.wasm_file;
     let interrupt = Interrupt::subscribe_any();
 
-    log::trace!("Front compiling WASM");
+    log::info!("Front compiling WASM");
 
     // see:
     // https://github.com/rustwasm/wasm-bindgen/blob/main/crates/cli-support/src/lib.rs#L95
