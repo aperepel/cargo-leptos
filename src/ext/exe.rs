@@ -29,7 +29,7 @@ pub struct ExeMeta {
     version: String,
     url: String,
     exe: String,
-    manual: &'static str,
+    manual: String,
 }
 
 lazy_static::lazy_static!{
@@ -273,7 +273,7 @@ impl Exe {
                     version,
                     url,
                     exe,
-                    manual: "Try manually installing cargo-generate: https://github.com/cargo-generate/cargo-generate#installation"
+                    manual: "Try manually installing cargo-generate: https://github.com/cargo-generate/cargo-generate#installation".to_string()
                 }
             }
             Exe::Sass => {
@@ -303,60 +303,11 @@ impl Exe {
                     version,
                     url,
                     exe,
-                    manual: "Try manually installing sass: https://sass-lang.com/install",
+                    manual: "Try manually installing sass: https://sass-lang.com/install".to_string(),
                 }
             }
-            Exe::WasmOpt => {
-                let version = CommandWasmOpt.resolve_version().await;
-
-                let target = match (target_os, target_arch) {
-                    ("linux", _) => "x86_64-linux",
-                    ("windows", _) => "x86_64-windows",
-                    ("macos", "aarch64") => "arm64-macos",
-                    ("macos", "x86_64") => "x86_64-macos",
-                    _ => {
-                        bail!("No wasm-opt tar binary found for {target_os} {target_arch}")
-                    }
-                };
-                let url = format!("https://github.com/WebAssembly/binaryen/releases/download/{version}/binaryen-{version}-{target}.tar.gz");
-
-                let exe = match target_os {
-                    "windows" => format!("binaryen-{version}/bin/wasm-opt.exe"),
-                    _ => format!("binaryen-{version}/bin/wasm-opt"),
-                };
-                ExeMeta {
-                    name: "wasm-opt",
-                    version,
-                    url,
-                    exe,
-                    manual:
-                        "Try manually installing binaryen: https://github.com/WebAssembly/binaryen",
-                }
-            }
-            Exe::Tailwind => {
-                let command = CommandTailwind;
-                let version = command.resolve_version().await;
-                let url = command.download_url(target_os, target_arch, version.as_str());
-                // let url = command.download_url(target_os, target_arch, version.clone().as_str());
-                if url.is_none() {
-                    bail!("Unknown target OS and Arch")
-                }
-
-                let exe = match (target_os, target_arch) {
-                    ("windows", _) => "tailwindcss-windows-x64.exe".to_string(),
-                    ("macos", "x86_64") => "tailwindcss-macos-x64".to_string(),
-                    ("macos", "aarch64") => "tailwindcss-macos-arm64".to_string(),
-                    ("linux", "x86_64") => "tailwindcss-linux-x64".to_string(),
-                    (_, _) => "tailwindcss-linux-arm64".to_string(),
-                };
-                ExeMeta {
-                    name: "tailwindcss",
-                    version: version.clone(),
-                    url: url.unwrap_or_default(),
-                    exe,
-                    manual: "Try manually installing tailwindcss",
-                }
-            }
+            Exe::WasmOpt => CommandWasmOpt.exe_meta(target_os, target_arch).await.dot()?,
+            Exe::Tailwind => CommandTailwind.exe_meta(target_os, target_arch).await.dot()?,
         };
 
         Ok(exe)
@@ -405,35 +356,37 @@ impl Command for CommandTailwind {
     fn github_owner(&self) -> &'static str { "tailwindlabs" }
     fn github_repo(&self) -> &'static str { "tailwindcss" }
 
-    /// Tool binary download url for the
-    ///
-    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
+    /// Tool binary download url for the given OS and platform arch
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String> {
         match (target_os, target_arch) {
-            ("windows", "x86_64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-windows-x64.exe",
-                                            self.github_owner(), self.github_repo(), version)),
-            ("macos", "x86_64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-macos-x64",
-                                           self.github_owner(), self.github_repo(), version)),
-            ("macos", "aarch64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-macos-arm64",
-                                            self.github_owner(), self.github_repo(), version)),
-            ("linux", "x86_64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-linux-x64",
-                                           self.github_owner(), self.github_repo(), version)),
-            ("linux", "aarch64") => Some(format!("https://github.com/{}/{}/releases/download/{}/tailwindcss-linux-arm64",
-                                            self.github_owner(), self.github_repo(), version)),
-            _ => {
-                log::warn!("Command [{}] failed to find a match for {}-{} ", self.name(), target_os, target_arch);
-                None
-            },
+            ("windows", "x86_64") => Ok(format!("https://github.com/{}/{}/releases/download/{}/{}-windows-x64.exe",
+                                            self.github_owner(), self.github_repo(), version, self.name())),
+            ("macos", "x86_64") => Ok(format!("https://github.com/{}/{}/releases/download/{}/{}-macos-x64",
+                                           self.github_owner(), self.github_repo(), version, self.name())),
+            ("macos", "aarch64") => Ok(format!("https://github.com/{}/{}/releases/download/{}/{}-macos-arm64",
+                                            self.github_owner(), self.github_repo(), version, self.name())),
+            ("linux", "x86_64") => Ok(format!("https://github.com/{}/{}/releases/download/{}/{}-linux-x64",
+                                           self.github_owner(), self.github_repo(), version, self.name())),
+            ("linux", "aarch64") => Ok(format!("https://github.com/{}/{}/releases/download/{}/{}-linux-arm64",
+                                            self.github_owner(), self.github_repo(), version, self.name())),
+            _ => bail!("Command [{}] failed to find a match for {}-{} ", self.name(), target_os, target_arch),
         }
     }
 
-    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
-        todo!()
+    fn executable_name(&self, target_os: &str, target_arch: &str, _version: Option<&str>) -> Result<String> {
+        Ok(match (target_os, target_arch) {
+            ("windows", _) => format!("{}-windows-x64.exe", self.name()),
+            ("macos", "x86_64") => format!("{}-macos-x64", self.name()),
+            ("macos", "aarch64") => format!("{}-macos-arm64", self.name()),
+            ("linux", "x86_64") => format!("{}-linux-x64", self.name()),
+            (_, _) => format!("{}-linux-arm64", self.name()),
+        })
     }
 }
 
 #[async_trait]
 impl Command for CommandWasmOpt {
-    fn name(&self) -> &'static str { "WASM Opt" }
+    fn name(&self) -> &'static str { "wasm-opt" }
     fn default_version(&self) -> &'static str {
         "version_112"
     }
@@ -443,12 +396,34 @@ impl Command for CommandWasmOpt {
     fn github_owner(&self) -> &'static str { "WebAssembly" }
     fn github_repo(&self) -> &'static str { "binaryen" }
 
-    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
-        todo!()
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String> {
+        let target = match (target_os, target_arch) {
+            ("linux", _) => "x86_64-linux",
+            ("windows", _) => "x86_64-windows",
+            ("macos", "aarch64") => "arm64-macos",
+            ("macos", "x86_64") => "x86_64-macos",
+            _ => {
+                bail!("No wasm-opt tar binary found for {target_os} {target_arch}")
+            }
+        };
+
+        Ok(format!(
+            "https://github.com/{}/{}/releases/download/{}/binaryen-{}-{}.tar.gz",
+            self.github_owner(),
+            self.github_repo(),
+            version,
+            version,
+            target)
+        )
     }
 
-    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
-        todo!()
+    fn executable_name(&self, target_os: &str, _target_arch: &str, version: Option<&str>) -> Result<String> {
+        if version.is_none() { bail!("Version is required for WASM Opt, none provided")};
+
+        Ok(match target_os {
+            "windows" => format!("binaryen-{}/bin/{}.exe", version.unwrap_or_default(), self.name()),
+            _ => format!("binaryen-{}/bin/{}", version.unwrap_or_default(), self.name()),
+        })
     }
 }
 
@@ -464,11 +439,11 @@ impl Command for CommandSass {
     fn github_owner(&self) -> &'static str { "dart-musl" }
     fn github_repo(&self) -> &'static str { "dart-sass" }
 
-    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String> {
         todo!()
     }
 
-    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
+    fn executable_name(&self, target_os: &str, target_arch: &str, version: Option<&str>) -> Result<String> {
         todo!()
     }
 }
@@ -485,15 +460,14 @@ impl Command for CommandCargoGenerate {
     fn github_owner(&self) -> &'static str { "cargo-generate" }
     fn github_repo(&self) -> &'static str { "cargo-generate" }
 
-    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String> {
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String> {
         todo!()
     }
 
-    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str {
+    fn executable_name(&self, target_os: &str, target_arch: &str, version: Option<&str>) -> Result<String> {
         todo!()
     }
 }
-
 
 #[async_trait]
 trait Command {
@@ -502,8 +476,36 @@ trait Command {
     fn env_var_version_name(&self) -> &str;
     fn github_owner(&self) -> &str;
     fn github_repo(&self) -> &str;
-    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Option<String>;
-    fn executable_name(&self, target_os: &str, target_arch: &str) -> &str;
+    fn download_url(&self, target_os: &str, target_arch: &str, version: &str) -> Result<String>;
+    fn executable_name(&self, target_os: &str, target_arch: &str, version: Option<&str>) -> Result<String>;
+
+    /// Resolves and creates command metadata.
+    /// Checks if a newer version of the binary is available (once a day).
+    /// A marker file is created in the cache directory. Add `-v` flag to
+    /// the `cargo leptos` command to see the OS-specific location.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_os` - The target operating system.
+    /// * `target_arch` - The target architecture.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the `ExeMeta` struct on success, or an error on failure.
+    ///
+    async fn exe_meta(&self, target_os: &str, target_arch: &str) -> Result<ExeMeta> {
+        let version = self.resolve_version().await;
+        let url = self.download_url(target_os, target_arch, version.as_str())?;
+        let exe = self.executable_name(target_os, target_arch, Some(version.as_str()))?;
+        Ok(ExeMeta {
+            name: self.name(),
+            version,
+            url: url.to_owned(),
+            exe: exe.to_string(),
+            manual: format!("Try manually installing [{}] from {}",
+                            self.name(), url.to_owned()),
+        })
+    }
 
     /// Returns true if the command should check for a new version
     /// Returns false in case of any errors (no check)
@@ -595,7 +597,13 @@ trait Command {
     /// compare with the currently requested version
     /// inform a user if a more recent compatible version is available
     async fn resolve_version(&self) -> String { // 'static self is odd, but required for an async closure below
-        if !self.should_check_for_new_version().await {
+        // TODO revisit this logic when implementing the SemVer compatible ranges matching
+        // if env var is set, use the requested version and bypass caching logic
+        let is_force_pin_version = env::var(self.env_var_version_name()).is_ok();
+        log::trace!("Command [{}] is_force_pin_version: {} - {:?}",
+            self.name(), is_force_pin_version, env::var(self.env_var_version_name()));
+
+        if !is_force_pin_version && !self.should_check_for_new_version().await {
             log::trace!("Command [{}] NOT checking for the latest available version", &self.name());
             return self.default_version().into();
         }
@@ -604,19 +612,9 @@ trait Command {
             env::var(self.env_var_version_name())
                 .unwrap_or_else(|_| self.default_version().into()).to_owned();
 
-        // let (tx, rx) = tokio::sync::oneshot::channel();
-
-        // let s = std::sync::Arc::new(Mutex::new(self));
-        // let inner = s.clone();
-        // let future = async move {
-        //     let latest = inner.lock().await;
         let latest = self.check_for_latest_version().await;
-            // tx.send(latest).unwrap();
-        // };
-        // tokio::spawn(future);
 
         match latest {
-        // match rx.await {
             Some(latest) => {
                 let norm_latest = self.normalize_version(latest.as_str());
                 let norm_version = self.normalize_version(&version);
@@ -630,8 +628,9 @@ trait Command {
                         },
                         core::cmp::Ordering::Less => {
                             log::info!(
-                                            "Command [{}] requested version {}, but a newer version {} is available, consider upgrading",
-                                            self.name(), version, &latest)
+                                            "Command [{}] requested version {}, but a newer version {} is available, you can try it out by \
+                                            setting the {}={} env var and re-running the command",
+                                            self.name(), version, &latest, self.env_var_version_name(), &latest)
                         }
                     }
                 }
